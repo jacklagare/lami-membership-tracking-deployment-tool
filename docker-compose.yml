@@ -1,0 +1,115 @@
+version: "3.7"
+
+services:
+
+  traefik:
+    image: traefik:v2.4
+    command:
+      - "--providers.docker.endpoint=unix:///var/run/docker.sock"
+      - "--providers.docker.swarmMode=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--providers.docker.network=medcenter"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.web-secure.address=:443"
+      - "--providers.file.directory=/configuration/"
+      - "--providers.file.watch=true"
+    ports:
+      - 80:80
+      - 443:443
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ${SALUSCIENS_DATA_DIR}/volume/traefik/certificates:/certificates
+      - ${SALUSCIENS_DATA_DIR}/volume/traefik/config:/configuration/
+    networks:
+      -  lami-network
+    deploy:
+      placement:
+        constraints:
+          - node.role == manager
+      labels:
+        - "traefik.http.routers.http-catchall.rule=hostregexp(`{host:.+}`)"
+        - "traefik.http.routers.http-catchall.entrypoints=web"
+        - "traefik.http.routers.http-catchall.middlewares=redirect-to-https"
+        - "traefik.http.middlewares.redirect-to-https.redirectscheme.scheme=https"
+
+  # PostgreSQL 
+ 
+  postgres:
+    image: postgres:13.2
+    volumes:
+      - ${DATA_DIR}/volume/data/postgres:/data
+    ports:
+      - 5432:5432
+    networks:
+      -  lami-network
+    environment:
+      - PGDATA=/data/postgres
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+    deploy:
+      mode: replicated
+      replicas: 1
+      endpoint_mode: vip
+    
+      
+  # API
+
+  api:
+    build: ./lami-membership-tracking-api
+    networks:
+      - lami-network
+    volumes:
+      - ${DATA_DIR}/volume/api/config:/config
+    command: /bin/bash -c "cp /config/api_config.js /api/config/index.js && pm2 start server.js && bash"
+    tty: true
+    deploy:
+      mode: replicated
+      replicas: 1
+      endpoint_mode: vip
+      update_config:
+        parallelism: 1
+        delay: 60s
+        failure_action: rollback
+      labels:
+        - "traefik.enable=true"
+        - "traefik.http.middlewares.api-https.redirectscheme.scheme=https"
+        - "traefik.http.routers.medcenter-api-http.entrypoints=web"
+        - "traefik.http.routers.api-http.rule=Host(`api.local`)"
+        - "traefik.http.routers.api-http.middlewares=api-https@docker"
+        - "traefik.http.routers.api.tls=true"
+        - "traefik.http.routers.api.rule=Host(`api.local`)"
+        - "traefik.http.routers.api.entrypoints=web-secure"
+        - "traefik.http.services.api.loadbalancer.server.port=3000"
+
+   # UI
+
+   frontend:
+     build: ./lami-membership-tracking-api
+     networks:
+       - lami-network
+     volumes:
+       - ${DATA_DIR}/volume/frontend/config:/config
+    command: /bin/bash -c ""
+    tty: true
+    deploy:
+      mode: replicated
+      replicas: 1
+      endpoint_mode: vip
+      update_config:
+        parallelism: 1
+        delay: 60s
+        failure_action: rollback
+      labels:
+        - "traefik.enable=true"
+        - "traefik.http.middlewares.frontend-https.redirectscheme.scheme=https"
+        - "traefik.http.routers.frontend-http.entrypoints=web"
+        - "traefik.http.routers.frontend-http.rule=Host(`ui.local`)"
+        - "traefik.http.routers.frontend-http.middlewares=frontend-https@docker"
+        - "traefik.http.routers.frontend.tls=true"
+        - "traefik.http.routers.frontend.rule=Host(`api.local`)"
+        - "traefik.http.routers.frontend.entrypoints=web-secure"
+        - "traefik.http.services.frontend.loadbalancer.server.port=3000"
+
+networks:
+  lami-network:
+    driver: overlay
