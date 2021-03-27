@@ -18,8 +18,8 @@ services:
       - 443:443
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
-      - ${SALUSCIENS_DATA_DIR}/volume/traefik/certificates:/certificates
-      - ${SALUSCIENS_DATA_DIR}/volume/traefik/config:/configuration/
+      - ${DATA_DIR}/volume/traefik/certificates:/certificates
+      - ${DATA_DIR}/volume/traefik/config:/configuration/
     networks:
       -  lami-network
     deploy:
